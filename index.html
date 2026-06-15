@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Opname iPOS - Web App</title>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .header-title { text-align: center; margin-bottom: 20px; width: 100%; max-width: 400px; }
+        .header-title h2 { margin: 0; color: #2c3e50; font-size: 24px; font-weight: 800; }
+        .header-title p { margin: 5px 0 0; color: #7f8c8d; font-size: 13px; font-weight: 600; }
+        .card { background: #ffffff; width: 100%; max-width: 400px; border-radius: 12px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); box-sizing: border-box; margin-bottom: 15px; }
+        label { font-size: 12px; color: #666; font-weight: 600; margin-bottom: 5px; display: block; }
+        input, select { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; box-sizing: border-box; outline: none; }
+        button { width: 100%; padding: 14px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; color: white; cursor: pointer; margin-bottom: 10px; transition: 0.3s; }
+        .btn-scan { background-color: #007bff; }
+        .btn-simpan { background-color: #28a745; }
+        .btn-bahaya { background-color: #dc3545; padding: 10px; font-size: 14px; }
+        .btn-sync { background-color: #ffc107; color: #000; margin-bottom: 15px; }
+        .btn-batal { background-color: #6c757d; margin-top: 10px; display: none; }
+        .hasil-box { background-color: #e9ecef; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 15px; min-height: 24px; }
+        #lbl_nama { font-size: 16px; font-weight: bold; color: #333; margin: 0; }
+        .list-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #eee; padding-bottom: 10px; margin-bottom: 10px;}
+        .item-riwayat { display: flex; justify-content: space-between; align-items: center; background: #f8f9fa; padding: 10px; border-radius: 8px; margin-bottom: 8px; border: 1px solid #eee; }
+        .item-info { flex: 1; }
+        .item-info strong { display: block; font-size: 14px; color: #2c3e50; }
+        .item-info small { color: #7f8c8d; font-size: 11px; }
+        .badge-qty { background: #007bff; color: white; padding: 5px 10px; border-radius: 20px; font-weight: bold; font-size: 14px; margin-right: 5px; }
+        .btn-aksi { width: auto; padding: 6px 10px; margin: 0; font-size: 14px; border-radius: 6px; background: #6c757d; }
+        .btn-aksi.hapus { background: #dc3545; }
+        
+        /* Area Kamera */
+        #reader { width: 100%; border-radius: 8px; overflow: hidden; display: none; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+
+    <div class="header-title">
+        <h2>PS Opname Web</h2>
+        <p>Tersambung ke Cloudflare Tunnel</p>
+    </div>
+
+    <div class="card">
+        <label>Nama Petugas Scan</label>
+        <input type="text" id="petugas" placeholder="Masukkan nama Anda..." onchange="simpanPengaturanLokal()" required>
+
+        <label>Pilih Lokasi Cabang / Gudang</label>
+        <select id="toko" onchange="simpanPengaturanLokal()">
+            <option value="UTM">UTM (Toko Pusat)</option>
+            <option value="PSSMD">CAB KOSMETIK</option>
+        </select>
+        
+        <label>Pilih Database</label>
+        <select id="db" onchange="simpanPengaturanLokal()">
+            <option value="pssmd">PS KOSMETIK</option>
+        </select>
+    </div>
+
+    <div class="card">
+        <div id="reader"></div>
+        <button id="btn-batal-scan" class="btn-batal" onclick="stopScan()">Tutup Kamera</button>
+
+        <button class="btn-scan" onclick="mintaScan()">📷 SCAN BARCODE</button>
+        <div class="hasil-box"><p id="lbl_nama">Nama barang akan muncul di sini...</p></div>
+        
+        <label>Qty Fisik Aktual</label>
+        <input type="number" id="qty" placeholder="Isi angka..." onfocus="this.value=''">
+        <button class="btn-simpan" onclick="kirimSimpan()">💾 SIMPAN DATA</button>
+    </div>
+
+    <div class="card">
+        <div class="list-header">
+            <h3 style="margin: 0; font-size: 16px;">Daftar Scan Aktif</h3>
+            <button class="btn-bahaya" style="width: auto; margin:0;" onclick="hapusSemua()">Kosongkan</button>
+        </div>
+        
+        <button class="btn-sync" onclick="kirimSinkronisasi()">☁️ SINKRONISASI KE SERVER</button>
+        
+        <div id="wadah-riwayat"></div>
+    </div>
+
+    <script>
+        // Gunakan URL Cloudflare Tunnel Anda
+        const API_BASE_URL = "https://opnameps.anntech.my.id/api";
+
+        let barcodeAktif = ""; 
+        let namaAktif = "";
+        let stokSistemAktif = 0; 
+        let isEditMode = false; 
+        let html5QrCode;
+
+        let riwayatScan = JSON.parse(localStorage.getItem('riwayatOpname')) || [];
+
+        window.onload = function() {
+            if(localStorage.getItem('opname_petugas')) document.getElementById("petugas").value = localStorage.getItem('opname_petugas');
+            if(localStorage.getItem('opname_toko')) document.getElementById("toko").value = localStorage.getItem('opname_toko');
+            if(localStorage.getItem('opname_db')) document.getElementById("db").value = localStorage.getItem('opname_db');
+            renderRiwayat();
+        };
+
+        function simpanPengaturanLokal() {
+            localStorage.setItem('opname_petugas', document.getElementById("petugas").value);
+            localStorage.setItem('opname_toko', document.getElementById("toko").value);
+            localStorage.setItem('opname_db', document.getElementById("db").value);
+        }
+
+        function simpanRiwayatLokal() {
+            localStorage.setItem('riwayatOpname', JSON.stringify(riwayatScan));
+        }
+
+        // FUNGSI SCANNER WEB
+        function mintaScan() {
+            var petugas = document.getElementById("petugas").value;
+            if (petugas === "") { alert("Mohon isi Nama Petugas Scan!"); return; }
+
+            document.getElementById('reader').style.display = 'block';
+            document.getElementById('btn-batal-scan').style.display = 'block';
+
+            html5QrCode = new Html5Qrcode("reader");
+            const config = { fps: 10, qrbox: { width: 250, height: 150 } };
+
+            html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess)
+            .catch(err => {
+                alert("Gagal membuka kamera: Pastikan Anda memberikan izin akses kamera pada browser.");
+                stopScan();
+            });
+        }
+
+        function onScanSuccess(decodedText, decodedResult) {
+            stopScan();
+            // Panggil API Pencarian Barang
+            cekBarangApi(decodedText);
+        }
+
+        function stopScan() {
+            if (html5QrCode) {
+                html5QrCode.stop().then(() => {
+                    document.getElementById('reader').style.display = 'none';
+                    document.getElementById('btn-batal-scan').style.display = 'none';
+                }).catch(err => console.log(err));
+            }
+        }
+
+        // FUNGSI FETCH API (Pengganti Kodular)
+        function cekBarangApi(barcode) {
+            document.getElementById("lbl_nama").innerText = "Mencari data...";
+            let toko = document.getElementById("toko").value;
+            let db = document.getElementById("db").value;
+
+            fetch(`${API_BASE_URL}/cek_barang?toko=${toko}&db=${db}&barcode=${barcode}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === "sukses") {
+                    namaAktif = data.nama_barang;
+                    barcodeAktif = data.kodeitem;
+                    stokSistemAktif = data.stok_sistem;
+                    document.getElementById("lbl_nama").innerText = namaAktif;
+                    document.getElementById("qty").focus();
+                } else {
+                    alert(data.pesan);
+                    resetLayar('Barcode tidak ditemukan!');
+                }
+            })
+            .catch(error => {
+                alert("Gagal terhubung ke server!");
+                resetLayar('Siap scan barang...');
+            });
+        }
+
+        function kirimSimpan() {
+            simpanPengaturanLokal();
+            var petugas = document.getElementById("petugas").value;
+            var qtyInput = document.getElementById("qty").value;
+            var toko = document.getElementById("toko").value;
+            var db = document.getElementById("db").value; 
+            
+            if (petugas === "") { alert("Mohon isi Nama Petugas!"); return; }
+            if (qtyInput === "" || barcodeAktif === "") { alert("Pastikan sudah scan dan isi Qty!"); return; }
+            
+            var lokasi_lengkap = toko + "_" + db;
+            let finalQty = qtyInput; 
+            let index = riwayatScan.findIndex(item => item.barcode === barcodeAktif && item.lokasi === lokasi_lengkap);
+            
+            if(index !== -1) {
+                if (isEditMode) {
+                    riwayatScan[index].qty = qtyInput;
+                } else {
+                    let qtyLama = parseInt(riwayatScan[index].qty, 10) || 0;
+                    let qtyTambahan = parseInt(qtyInput, 10) || 0;
+                    riwayatScan[index].qty = (qtyLama + qtyTambahan).toString();
+                }
+            } else {
+                riwayatScan.unshift({
+                    lokasi: lokasi_lengkap, barcode: barcodeAktif, nama: namaAktif, qty: finalQty, stok_sistem: stokSistemAktif, petugas: petugas 
+                });
+            }
+            
+            simpanRiwayatLokal();
+            renderRiwayat();
+            isEditMode = false; 
+            resetLayar('Data tersimpan. Siap scan barang berikutnya...');
+        }
+
+        function renderRiwayat() {
+            let wadah = document.getElementById("wadah-riwayat");
+            if (riwayatScan.length === 0) {
+                wadah.innerHTML = '<p style="text-align: center; font-size: 12px; color: #999;">Belum ada barang di-scan.</p>';
+                return;
+            }
+            let html = "";
+            riwayatScan.forEach((item, i) => {
+                html += `
+                <div class="item-riwayat">
+                    <div class="item-info">
+                        <strong>${item.nama}</strong>
+                        <small>PLU: ${item.barcode} | Stok iPOS: ${item.stok_sistem}</small>
+                    </div>
+                    <div class="item-aksi">
+                        <span class="badge-qty">${item.qty}</span>
+                        <button class="btn-aksi" onclick="editItem(${i})">✏️</button>
+                        <button class="btn-aksi hapus" onclick="hapusItem(${i})">🗑️</button>
+                    </div>
+                </div>`;
+            });
+            wadah.innerHTML = html;
+        }
+
+        function editItem(index) {
+            let item = riwayatScan[index];
+            barcodeAktif = String(item.barcode);
+            namaAktif = item.nama;
+            stokSistemAktif = item.stok_sistem;
+            isEditMode = true; 
+            document.getElementById("lbl_nama").innerText = item.nama;
+            document.getElementById("qty").value = item.qty;
+            document.getElementById("qty").focus();
+        }
+
+        function hapusItem(index) {
+            if(confirm("Hapus " + riwayatScan[index].nama + " dari daftar?")) {
+                riwayatScan.splice(index, 1);
+                simpanRiwayatLokal();
+                renderRiwayat();
+            }
+        }
+
+        function hapusSemua() {
+            if(confirm("AWAS! Yakin ingin menghapus seluruh data opname di HP ini?")) {
+                riwayatScan = [];
+                simpanRiwayatLokal();
+                renderRiwayat();
+            }
+        }
+        
+        function kirimSinkronisasi() {
+            if (riwayatScan.length === 0) { alert("Data opname masih kosong!"); return; }
+            alert("Tombol sinkronisasi siap diintegrasikan. Pastikan Anda membuat Endpoint POST /api/sync di Python untuk menerima JSON dari web ini!");
+            console.log("Data Siap Kirim:", JSON.stringify(riwayatScan));
+        }
+
+        function resetLayar(pesan) {
+            document.getElementById("lbl_nama").innerText = pesan;
+            document.getElementById("qty").value = "";
+            barcodeAktif = "";
+        }
+    </script>
+</body>
+</html>
