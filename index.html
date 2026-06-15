@@ -18,6 +18,7 @@
         .btn-simpan { background-color: #28a745; }
         .btn-bahaya { background-color: #dc3545; padding: 10px; font-size: 14px; }
         .btn-sync { background-color: #ffc107; color: #000; margin-bottom: 15px; }
+        .btn-download { background-color: #17a2b8; color: white; margin-bottom: 10px; }
         .btn-batal { background-color: #6c757d; margin-top: 10px; display: none; }
         .hasil-box { background-color: #e9ecef; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 15px; min-height: 24px; }
         #lbl_nama { font-size: 16px; font-weight: bold; color: #333; margin: 0; }
@@ -30,12 +31,10 @@
         .btn-aksi { width: auto; padding: 6px 10px; margin: 0; font-size: 14px; border-radius: 6px; background: #6c757d; }
         .btn-aksi.hapus { background: #dc3545; }
         
-        /* Modifikasi untuk grup input manual */
         .input-group { display: flex; gap: 8px; margin-bottom: 15px; }
         .input-group input { margin-bottom: 0; flex: 1; }
         .input-group button { margin-bottom: 0; width: auto; padding: 0 20px; background-color: #17a2b8; }
 
-        /* Area Kamera */
         #reader { width: 100%; border-radius: 8px; overflow: hidden; display: none; margin-bottom: 15px; }
     </style>
 </head>
@@ -51,14 +50,20 @@
         <input type="text" id="petugas" placeholder="Masukkan nama Anda..." onchange="simpanPengaturanLokal()" required>
 
         <label>Pilih Lokasi Cabang / Gudang</label>
-        <select id="toko" onchange="simpanPengaturanLokal()">
-            <option value="UTM">UTM (Toko Pusat)</option>
-            <option value="PSSMD">CAB KOSMETIK</option>
+        <select id="toko" onchange="handleTokoChange()">
+            <option value="UTM">UTM (Pusat)</option>
+            <option value="GDB">GDB (Pusat)</option>
+            <option value="PSSMD">PSSMD (Toko Kosmetik)</option>
+            <option value="TAMPO">TAMPO (Toko Tampomas)</option>
+            <option value="SITUR">SITUR (Toko Situraja)</option>
         </select>
         
         <label>Pilih Database</label>
         <select id="db" onchange="simpanPengaturanLokal()">
-            <option value="PSSMD">PS KOSMETIK</option>
+            <option value="pribadishop">pribadishop (PUSAT)</option>
+            <option value="PSDMD">PSDMD (CABANG PSSMD)</option>
+            <option value="tampomas">tampomas (CABANG TAMPOMAS)</option>
+            <option value="situraja">situraja (CABANG SITURAJA)</option>
         </select>
     </div>
 
@@ -88,13 +93,15 @@
         </div>
         
         <button class="btn-sync" onclick="kirimSinkronisasi()">☁️ SINKRONISASI KE SERVER</button>
+        <button class="btn-download" onclick="unduhExcelServer()">📥 DOWNLOAD EXCEL DARI SERVER</button>
         
         <div id="wadah-riwayat"></div>
     </div>
 
     <script>
-        // Gunakan URL Cloudflare Tunnel Anda
+        // URL Produksi mengarah ke Subdomain Cloudflare Tunnel Anda
         const API_BASE_URL = "https://opnameps.anntech.my.id/api";
+        const SERVER_DOWNLOAD_URL = "https://opnameps.anntech.my.id/download";
 
         let barcodeAktif = ""; 
         let namaAktif = "";
@@ -111,6 +118,22 @@
             renderRiwayat();
         };
 
+        function handleTokoChange() {
+            const toko = document.getElementById("toko").value;
+            const dbSelect = document.getElementById("db");
+            
+            if (toko === "UTM" || toko === "GDB") {
+                dbSelect.value = "pribadishop";
+            } else if (toko === "PSSMD") {
+                dbSelect.value = "PSDMD";
+            } else if (toko === "TAMPO") {
+                dbSelect.value = "tampomas";
+            } else if (toko === "SITUR") {
+                dbSelect.value = "situraja";
+            }
+            simpanPengaturanLokal();
+        }
+
         function simpanPengaturanLokal() {
             localStorage.setItem('opname_petugas', document.getElementById("petugas").value);
             localStorage.setItem('opname_toko', document.getElementById("toko").value);
@@ -121,7 +144,6 @@
             localStorage.setItem('riwayatOpname', JSON.stringify(riwayatScan));
         }
 
-        // FUNGSI SCANNER WEB VIA KAMERA
         function mintaScan() {
             var petugas = document.getElementById("petugas").value;
             if (petugas === "") { alert("Mohon isi Nama Petugas Scan!"); return; }
@@ -134,7 +156,7 @@
 
             html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess)
             .catch(err => {
-                alert("Gagal membuka kamera: Pastikan Anda memberikan izin akses kamera pada browser.");
+                alert("Gagal membuka kamera. Berikan izin akses kamera.");
                 stopScan();
             });
         }
@@ -153,7 +175,6 @@
             }
         }
 
-        // FUNGSI CEK BARCODE MANUAL (MENGGUNAKAN TOMBOL ATAU ENTER)
         function handleCekManual(e) {
             if (e.key === 'Enter') {
                 cekBarangManual();
@@ -165,12 +186,11 @@
             if (petugas === "") { alert("Mohon isi Nama Petugas Scan!"); return; }
 
             let barcode = document.getElementById("barcode_manual").value.trim();
-            if (barcode === "") { alert("Silakan ketik angka barcode terlebih dahulu!"); return; }
+            if (barcode === "") { alert("Silakan ketik angka barcode dahulu!"); return; }
             
             cekBarangApi(barcode);
         }
 
-        // FUNGSI UTAMA FETCH API KONEKSI KE SERVER FLASK VIA CLOUDFLARE
         function cekBarangApi(barcode) {
             document.getElementById("lbl_nama").innerText = "Mencari data ke server...";
             let toko = document.getElementById("toko").value;
@@ -185,14 +205,14 @@
                     stokSistemAktif = data.stok_sistem;
                     document.getElementById("lbl_nama").innerText = namaAktif;
                     document.getElementById("qty").focus();
-                    document.getElementById("barcode_manual").value = ""; // Bersihkan kolom setelah sukses
+                    document.getElementById("barcode_manual").value = ""; 
                 } else {
                     alert(data.pesan);
                     resetLayar('Barcode tidak ditemukan!');
                 }
             })
             .catch(error => {
-                alert("Gagal terhubung ke server! Periksa kembali status API / CORS Anda.");
+                alert("Gagal terhubung ke server pusat! Pastikan Tunnel aktif.");
                 resetLayar('Siap scan barang...');
             });
         }
@@ -228,7 +248,8 @@
             simpanRiwayatLokal();
             renderRiwayat();
             isEditMode = false; 
-            resetLayar('Data tersimpan. Siap input barang berikutnya...');
+            resetLayar('Data tersimpan. Siap input berikutnya...');
+            document.getElementById("barcode_manual").focus(); 
         }
 
         function renderRiwayat() {
@@ -243,7 +264,7 @@
                 <div class="item-riwayat">
                     <div class="item-info">
                         <strong>${item.nama}</strong>
-                        <small>PLU: ${item.barcode} | Stok iPOS: ${item.stok_sistem}</small>
+                        <small>PLU: ${item.barcode} | Target: ${item.lokasi}</small>
                     </div>
                     <div class="item-aksi">
                         <span class="badge-qty">${item.qty}</span>
@@ -274,18 +295,57 @@
             }
         }
 
+        function hapusAllLocal() {
+            riwayatScan = [];
+            simpanRiwayatLokal();
+            renderRiwayat();
+        }
+
         function hapusSemua() {
-            if(confirm("AWAS! Yakin ingin menghapus seluruh data opname di HP ini?")) {
-                riwayatScan = [];
-                simpanRiwayatLokal();
-                renderRiwayat();
+            if(confirm("AWAS! Yakin ingin menghapus seluruh data scan aktif di HP ini?")) {
+                hapusAllLocal();
             }
         }
         
         function kirimSinkronisasi() {
             if (riwayatScan.length === 0) { alert("Data opname masih kosong!"); return; }
-            alert("Tombol sinkronisasi siap diintegrasikan. Data JSON siap dikirim ke Endpoint POST /api/sync.");
-            console.log("Data Siap Kirim:", JSON.stringify(riwayatScan));
+            if (!confirm(`Kirim ${riwayatScan.length} data ke server pusat sekarang?`)) return;
+
+            const btnSync = document.querySelector('.btn-sync');
+            btnSync.innerText = "⏳ SINKRONISASI MASSAL...";
+            btnSync.disabled = true;
+
+            fetch(`${API_BASE_URL}/sync`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(riwayatScan) 
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === "sukses") {
+                    alert(data.pesan);
+                    hapusAllLocal(); 
+                } else {
+                    alert("Gagal sinkronisasi: " + data.pesan);
+                }
+            })
+            .catch(error => {
+                alert("Gagal koneksi! Periksa internet / status Cloudflare Tunnel.");
+                console.error(error);
+            })
+            .finally(() => {
+                btnSync.innerText = "☁️ SINKRONISASI KE SERVER";
+                btnSync.disabled = false;
+            });
+        }
+
+        function unduhExcelServer() {
+            let toko = document.getElementById("toko").value;
+            let db = document.getElementById("db").value;
+            if(!toko || !db) { alert("Pilih Lokasi Toko & DB terlebih dahulu!"); return; }
+            
+            var lokasi_target = toko + "_" + db;
+            window.location.href = `${SERVER_DOWNLOAD_URL}/${lokasi_target}`;
         }
 
         function resetLayar(pesan) {
